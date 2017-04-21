@@ -6,18 +6,35 @@ With -m flag, will return a list of modules names instead.
 """
 
 from __future__ import print_function
+
+import ast
 import os
 import sys
 
+from git_run import GitRun
+
+
+MANIFEST_FILES = [
+    '__manifest__.py',
+    '__odoo__.py',
+    '__openerp__.py',
+    '__terp__.py',
+]
+
 
 def is_module(path):
+    """return False if the path doesn't contain an odoo module, and the full
+    path to the module manifest otherwise"""
+
     if not os.path.isdir(path):
         return False
-    manifs = ['__openerp__.py', '__odoo__.py', '__terp.py__', '__init__.py']
     files = os.listdir(path)
-    filtered = [x for x in files if x in manifs]
-    res = len(filtered) == 2 and '__init__.py' in filtered
-    return res
+    filtered = [x for x in files if x in (MANIFEST_FILES + ['__init__.py'])]
+    if len(filtered) == 2 and '__init__.py' in filtered:
+        return os.path.join(
+            path, next(x for x in filtered if x != '__init__.py'))
+    else:
+        return False
 
 
 def get_modules(path):
@@ -46,6 +63,44 @@ def get_addons(path):
                for x in os.listdir(path)
                if is_addons(os.path.join(path, x))]
     return res
+
+
+def get_modules_changed(path, ref='HEAD'):
+    '''Get modules changed from git diff-index {ref}
+    :param path: String path of git repo
+    :param ref: branch or remote/branch or sha to compare
+    :return: List of paths of modules changed
+    '''
+    git_run_obj = GitRun(os.path.join(path, '.git'))
+    if ref != 'HEAD':
+        fetch_ref = ref
+        if ':' not in fetch_ref:
+            # to force create branch
+            fetch_ref += ':' + fetch_ref
+        git_run_obj.run(['fetch'] + fetch_ref.split('/', 1))
+    items_changed = git_run_obj.get_items_changed(ref)
+    folders_changed = set([
+        item_changed.split('/')[0]
+        for item_changed in items_changed
+        if '/' in item_changed]
+    )
+    modules = set(get_modules(path))
+    modules_changed = list(modules & folders_changed)
+    modules_changed_path = [
+        os.path.join(path, module_changed)
+        for module_changed in modules_changed]
+    return modules_changed_path
+
+
+def is_installable_module(path):
+    """return False if the path doesn't contain an installable odoo module,
+    and the full path to the module manifest otherwise"""
+    manifest_path = is_module(path)
+    if manifest_path:
+        manifest = ast.literal_eval(open(manifest_path).read())
+        if manifest.get('installable', True):
+            return manifest_path
+    return False
 
 
 if __name__ == "__main__":
